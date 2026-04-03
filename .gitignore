@@ -31,6 +31,14 @@ Lecture_Notes.pdf
 .agents/
 _agent/
 _agents/
+.gemini/
+GSD-STYLE.md
+PROJECT_RULES.md
+adapters/
+docs/
+gsd-template/
+model_capabilities.yaml
+scripts/
 
 # Exclude capture contents but maintain directory
 captures/*
