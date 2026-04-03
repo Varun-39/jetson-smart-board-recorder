@@ -23,8 +23,9 @@ The SBC pipeline is meticulously engineered for continuous, real-time edge proce
 ## ✨ Key Features
 
 - **Intelligent Change Detection**: Contextual tracking via Structural Similarity (SSIM) effectively mitigates "teacher occlusion" by demanding a 4-second continuous stability window before concluding an interaction.
-- **Real-time Rectification**: Autonomous edge extraction and perspective-warping transformations guarantee a perfectly flat, top-down 1280x720 capture regardless of camera placement.
-- **Asynchronous OCR**: A strict singleton Queue prevents memory deadlocking, feeding PyTesseract images exactly one at a time while safely buffering heavy capture bursts.
+- **Real-time Rectification**: Autonomous edge extraction enforced heavily with `convexHull` geometry maps perspective-warped transformations guaranteeing a perfectly flat, top-down 1280x720 capture.
+- **Resilient Memory Management**: The PDF export engine utilizes `io.BytesIO` to stream outputs completely from volatile RAM, preventing local storage latency. Embedded `DejaVuSans.ttf` fetchers handle Unicode & Math generation cleanly.
+- **Asynchronous OCR & Safety Locks**: A strict singleton Queue prevents memory deadlocking, buffering heavy captures safely behind `threading.Lock()` pipelines tightly bound by `None` sentinel garbage collectors upon teardown.
 - **NVIDIA-Themed Web UI**: A dark-mode Dashboard equipped with live Vanilla JS DOM polling, robust inline full-text search, and a one-click PDF Compiler.
 
 ---
@@ -81,9 +82,9 @@ pip install opencv-python flask pytesseract fpdf2 scikit-image
 ## 📂 Project Structure
 
 ```text
-├── .gsd/                 # Generative specification tracking records
 ├── captures/             # Automated payload destination (.jpg, .txt)
 ├── app.py                # Flask WSGI architecture & PDF exporter
+├── config.py             # Global tunables & architectural constant limits
 ├── main.py               # Application entrypoint & OpenCV runtime
 ├── ocr_engine.py         # Thread-safe Singleton for PyTesseract
 ├── README.md             # Theoretical baseline and documentation
