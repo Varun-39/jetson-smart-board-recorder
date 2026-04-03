@@ -25,6 +25,13 @@ Lecture_Notes.pdf
 *test*.jpg
 *test*.png
 
+# Agent and Workflow Data
+.gsd/
+.agent/
+.agents/
+_agent/
+_agents/
+
 # Exclude capture contents but maintain directory
 captures/*
 !captures/.gitkeep
