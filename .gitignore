@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# Environment Variables
+.env
+.flaskenv
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Application Specific
+Lecture_Notes.pdf
+*test*.jpg
+*test*.png
+
+# Exclude capture contents but maintain directory
+captures/*
+!captures/.gitkeep

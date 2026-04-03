@@ -2,7 +2,12 @@ import cv2
 import time
 import os
 import glob
+import multiprocessing
 from skimage.metrics import structural_similarity as ssim
+
+from vision_utils import BoardProcessor
+from ocr_engine import OCRWorker
+from app import run_flask
 
 def get_next_filename(capture_dir="captures"):
     """Finds the next sequential page number based on existing files."""
@@ -27,6 +32,15 @@ def preprocess(frame):
     return gray
 
 def main():
+    processor = BoardProcessor()
+    ocr_worker = OCRWorker()
+    ocr_worker.start()
+
+    # Start Flask Web Dashboard as a separate background process
+    print("Launching Web Dashboard on http://localhost:5000")
+    web_process = multiprocessing.Process(target=run_flask, daemon=True)
+    web_process.start()
+
     # 1. INITIALIZE (GStreamer pipeline for Jetson Nano)
     pipeline = (
         "nvarguscamerasrc ! "
@@ -39,9 +53,11 @@ def main():
     
     if not cap.isOpened():
         print("Error: Could not open CSI camera. Verify nvarguscamerasrc is working.")
-        # Fallback to standard webcam for local testing if needed
-        # cap = cv2.VideoCapture(0)
-        return
+        print("Falling back to standard webcam for local testing...")
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Error: Could not open local webcam either. Exiting.")
+            return
 
     capture_dir = "captures"
     page_num = get_next_filename(capture_dir)
@@ -103,8 +119,16 @@ def main():
                         # STABLE FOR 4 SECONDS -> SAVE
                         if elapsed_stable >= 4.0:
                             filename = os.path.join(capture_dir, f"page_{page_num:03d}.jpg")
-                            cv2.imwrite(filename, frame)
+                            
+                            # 1. Warp it
+                            warped = processor.detect_and_warp(frame)
+                            # 2. Enhance it
+                            enhanced = processor.enhance_for_reading(warped)
+                            # 3. Save it
+                            cv2.imwrite(filename, enhanced)
                             print(f"[SAVED] {os.path.basename(filename)}")
+                            # 4. Background OCR it
+                            ocr_worker.add_to_queue(filename)
                             
                             # Update reference frame
                             reference_frame = current_frame_small.copy()
@@ -135,6 +159,9 @@ def main():
         cv2.putText(frame, f"Ref SSIM: {saved_ref_ssim:.2f}", (30, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         cv2.putText(frame, f"Delta SSIM: {saved_delta_ssim:.2f}", (30, 130), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         
+        if ocr_worker.is_processing():
+            cv2.putText(frame, "OCR Processing...", (30, 210), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
+        
         if state == "STABILIZING" and stability_start_time:
             countdown = max(0, 4.0 - (time.time() - stability_start_time))
             cv2.putText(frame, f"Saving in: {countdown:.1f}s", (30, 170), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
@@ -146,6 +173,15 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+    
+    # Safely terminate the Web Dashboard upon exit
+    print("Shutting down Web Dashboard...")
+    if web_process.is_alive():
+        web_process.terminate()
+        web_process.join()
+    print("System safely shut down.")
 
 if __name__ == "__main__":
+    # Needed for Windows multiprocessing support (safe on Linux too)
+    multiprocessing.freeze_support()
     main()

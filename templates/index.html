@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Board Controls</title>
+    <style>
+        :root {
+            --bg-color: #000000;
+            --card-bg: #1a1a1a;
+            --accent: #76b900;
+            --text-main: #ffffff;
+            --text-muted: #888888;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+        }
+
+        header {
+            background-color: var(--card-bg);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--accent);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        input[type="text"] {
+            padding: 10px 15px;
+            border-radius: 5px;
+            border: 1px solid #333;
+            background-color: #0d0d0d;
+            color: var(--text-main);
+            width: 300px;
+            font-size: 14px;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn {
+            background-color: var(--accent);
+            color: #000;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #8ce600;
+        }
+
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 25px;
+            padding: 40px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.2s;
+            border: 1px solid #333;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent);
+        }
+
+        .card img {
+            width: 100%;
+            height: auto;
+            border-bottom: 2px solid #333;
+        }
+
+        .card-content {
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .ocr-text {
+            background-color: #0d0d0d;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-muted);
+            white-space: pre-wrap;
+            max-height: 150px;
+            overflow-y: auto;
+            display: none;
+            margin-top: auto;
+        }
+
+        .processing-tag {
+            color: #ff9900;
+            font-style: italic;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">NVIDIA Jetson Dashboard</div>
+        <div class="controls">
+            <input type="text" id="searchInput" placeholder="Search OCR text content...">
+            <a href="/export" class="btn" target="_blank">Export as PDF</a>
+        </div>
+    </header>
+
+    <div class="gallery" id="gallery">
+        <!-- Cards injected dynamically -->
+    </div>
+
+    <script>
+        const gallery = document.getElementById('gallery');
+        const searchInput = document.getElementById('searchInput');
+        let currentPages = {}; 
+        let searchTerm = "";
+
+        function toggleText(id) {
+            const txtDiv = document.getElementById(`txt-${id}`);
+            txtDiv.style.display = txtDiv.style.display === "block" ? "none" : "block";
+        }
+
+        async function fetchPages() {
+            try {
+                const response = await fetch('/api/pages');
+                const data = await response.json();
+                
+                const newIds = new Set(data.map(p => p.id));
+                
+                // Cleanup removed
+                for (let knownId in currentPages) {
+                    if (!newIds.has(knownId)) {
+                        const el = document.getElementById(`card-${knownId}`);
+                        if (el) el.remove();
+                        delete currentPages[knownId];
+                    }
+                }
+                
+                data.forEach(page => {
+                    const isProcessing = page.processing;
+                    const textSnippet = isProcessing ? `<span class="processing-tag">Processing...</span>` : 
+                                      `<button class="btn" onclick="toggleText('${page.id}')" style="padding: 5px 10px; font-size: 12px; background: transparent; border: 1px solid var(--accent); color: var(--accent);">View Text</button>`;
+
+                    const cardHtml = `
+                        <div class="card" id="card-${page.id}" data-text="${page.text.toLowerCase()}">
+                            <img src="${page.image_url}" alt="Capture ${page.id}">
+                            <div class="card-content">
+                                <div class="card-header">
+                                    <div class="card-title">${page.id.replace('page_', 'Page ')}</div>
+                                    ${textSnippet}
+                                </div>
+                                <div class="ocr-text" id="txt-${page.id}">${page.text}</div>
+                            </div>
+                        </div>
+                    `;
+
+                    // If new
+                    if (!currentPages[page.id]) {
+                        // Prepend
+                        gallery.insertAdjacentHTML('afterbegin', cardHtml);
+                        currentPages[page.id] = page;
+                        applySearchFilter();
+                    } 
+                    // Update processing to done
+                    else if (currentPages[page.id].processing && !page.processing) {
+                        const existingCard = document.getElementById(`card-${page.id}`);
+                        if (existingCard) {
+                            existingCard.outerHTML = cardHtml;
+                            currentPages[page.id] = page;
+                            applySearchFilter();
+                        }
+                    }
+                });
+
+            } catch (err) {
+                console.error("AJAX Fetch Error: ", err);
+            }
+        }
+
+        function applySearchFilter() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach(card => {
+                const text = card.getAttribute('data-text');
+                if (searchTerm === "" || text.includes(searchTerm)) {
+                    card.style.display = "flex";
+                } else {
+                    card.style.display = "none";
+                }
+            });
+        }
+
+        searchInput.addEventListener('input', (e) => {
+            searchTerm = e.target.value.toLowerCase();
+            applySearchFilter();
+        });
+
+        // Loop poller
+        fetchPages();
+        setInterval(fetchPages, 3000); // 3s fetch
+    </script>
+</body>
+</html>
