@@ -1,11 +1,23 @@
 import os
 import glob
+import io
+import urllib.request
 from datetime import datetime
-from flask import Flask, render_template, jsonify, send_from_directory, send_file
+from flask import Flask, render_template, jsonify, send_from_directory, send_file, request
 from fpdf import FPDF
 
 app = Flask(__name__)
 CAPTURE_DIR = "captures"
+FONT_PATH = "DejaVuSans.ttf"
+
+def ensure_font_loaded():
+    if not os.path.exists(FONT_PATH):
+        print("[System] Downloading DejaVuSans.ttf for PDF Unicode support...")
+        try:
+            url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
+            urllib.request.urlretrieve(url, FONT_PATH)
+        except Exception as e:
+            print(f"[Warning] Failed to download Unicode font: {e}")
 
 @app.route('/')
 def index():
@@ -20,6 +32,15 @@ def get_pages():
     images = glob.glob(os.path.join(CAPTURE_DIR, "*.jpg"))
     # Sort them sequentially based on the page number
     images.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+    
+    # Simple Pagination
+    limit = request.args.get('limit', type=int)
+    offset = request.args.get('offset', default=0, type=int)
+    
+    if limit is not None:
+        images = images[offset:offset+limit]
+    else:
+        images = images[offset:]
     
     pages = []
     for img_path in images:
@@ -61,17 +82,31 @@ def export_pdf():
     if not images:
         return "No captures found", 404
 
+    ensure_font_loaded()
+
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
+    
+    if os.path.exists(FONT_PATH):
+        pdf.add_font("DejaVu", "", FONT_PATH)
+        base_font = "DejaVu"
+    else:
+        base_font = "helvetica"
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     for img_path in images:
         pdf.add_page()
         # Header
-        pdf.set_font("helvetica", "B", 16)
-        pdf.cell(0, 10, "Smart Board Capture", align="C", new_x="LMARGIN", new_y="NEXT") # Updated to fpdf2 syntax
-        pdf.set_font("helvetica", "I", 10)
+        try:
+             pdf.set_font(base_font, "", 16)
+        except Exception:
+             pdf.set_font("helvetica", "B", 16)
+        pdf.cell(0, 10, "Smart Board Capture", align="C", new_x="LMARGIN", new_y="NEXT")
+        try:
+             pdf.set_font(base_font, "", 10)
+        except Exception:
+             pdf.set_font("helvetica", "I", 10)
         pdf.cell(0, 10, f"Recorded on: {timestamp}", align="C", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(5)
         
@@ -82,20 +117,24 @@ def export_pdf():
         base_name = os.path.splitext(os.path.basename(img_path))[0]
         txt_path = os.path.join(CAPTURE_DIR, f"{base_name}.txt")
         
-        pdf.set_font("helvetica", "", 12)
+        try:
+             pdf.set_font(base_font, "", 12)
+        except Exception:
+             pdf.set_font("helvetica", "", 12)
+             
         if os.path.exists(txt_path):
             with open(txt_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                # Encode text replacing unprintable chars since fpdf struggles with unicode out of the box
-                content = content.encode('latin-1', 'replace').decode('latin-1') 
+                # Encode text replacing unprintable chars if falling back
+                if base_font == "helvetica":
+                    content = content.encode('latin-1', 'replace').decode('latin-1') 
                 pdf.multi_cell(0, 8, content)
         else:
             pdf.multi_cell(0, 8, "[OCR Processing Incomplete]")
             
-    pdf_path = "Lecture_Notes.pdf"
-    pdf.output(pdf_path)
-    
-    return send_file(pdf_path, as_attachment=True)
+    # Volatile RAM export
+    pdf_bytes = pdf.output()
+    return send_file(io.BytesIO(pdf_bytes), as_attachment=True, download_name="Lecture_Notes.pdf", mimetype='application/pdf')
 
 def run_flask():
     # Keep console silent using werkzeug logger

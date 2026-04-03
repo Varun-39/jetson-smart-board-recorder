@@ -3,6 +3,7 @@ import time
 import os
 import glob
 import multiprocessing
+import config
 from skimage.metrics import structural_similarity as ssim
 
 from vision_utils import BoardProcessor
@@ -84,16 +85,23 @@ def main():
     saved_delta_ssim = 1.0
 
     print("Started Smart Board Change Detection. Press 'q' to quit.")
+    fail_count = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
+            fail_count += 1
+            if fail_count >= 10:
+                print("[ERROR] Camera failed 10 consecutive times. Shutting down system.")
+                break
+            time.sleep(0.1)
             continue
             
+        fail_count = 0
         current_time = time.time()
         
-        # 3. LOOP - Process every 0.5 seconds
-        if current_time - last_check_time >= 0.5:
+        # 3. LOOP - Process every X seconds
+        if current_time - last_check_time >= config.POLL_INTERVAL:
             current_frame_small = preprocess(frame)
             
             # SSIM between 'current_frame' and 'reference_frame'
@@ -103,21 +111,21 @@ def main():
             delta_ssim, _ = ssim(current_frame_small, previous_frame, full=True)
             
             # CHANGE DETECTED LOGIC
-            if ref_ssim < 0.85:
+            if ref_ssim < config.SSIM_THRESHOLD:
                 if state == "IDLE":
                     print(f"[CHANGE] Detected (SSIM={ref_ssim:.2f}) — waiting for stability...")
                     state = "CHANGE DETECTED"
 
                 # STABILITY LOGIC
-                if delta_ssim > 0.98:
+                if delta_ssim > config.STABILITY_THRESHOLD:
                     if state == "CHANGE DETECTED":
                         state = "STABILIZING"
                         stability_start_time = current_time
                     elif state == "STABILIZING":
                         elapsed_stable = current_time - stability_start_time
                         
-                        # STABLE FOR 4 SECONDS -> SAVE
-                        if elapsed_stable >= 4.0:
+                        # STABLE FOR X SECONDS -> SAVE
+                        if elapsed_stable >= config.STABILITY_TIME:
                             filename = os.path.join(capture_dir, f"page_{page_num:03d}.jpg")
                             
                             # 1. Warp it
@@ -144,7 +152,7 @@ def main():
                         stability_start_time = None
             else:
                 # REVERT LOGIC
-                if ref_ssim >= 0.90 and state != "IDLE":
+                if ref_ssim >= config.REVERT_THRESHOLD and state != "IDLE":
                     print(f"[RESET] Scene reverted — debounce reset")
                     state = "IDLE"
                     stability_start_time = None
@@ -163,13 +171,18 @@ def main():
             cv2.putText(frame, "OCR Processing...", (30, 210), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
         
         if state == "STABILIZING" and stability_start_time:
-            countdown = max(0, 4.0 - (time.time() - stability_start_time))
+            countdown = max(0, config.STABILITY_TIME - (time.time() - stability_start_time))
             cv2.putText(frame, f"Saving in: {countdown:.1f}s", (30, 170), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
 
         cv2.imshow("Smart Board Monitor", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+
+    # Safely detach threads before hardware release
+    print("Shutting down OCR thread...")
+    ocr_worker.add_to_queue(None)
+    ocr_worker.join()
 
     cap.release()
     cv2.destroyAllWindows()
