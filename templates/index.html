@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -88,7 +89,7 @@
             background-color: var(--card-bg);
             border-radius: 8px;
             overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
             display: flex;
             flex-direction: column;
             transition: transform 0.2s;
@@ -147,12 +148,14 @@
         }
     </style>
 </head>
+
 <body>
 
     <header>
         <div class="header-title">NVIDIA Jetson Dashboard</div>
         <div class="controls">
             <input type="text" id="searchInput" placeholder="Search OCR text content...">
+            <button class="btn" onclick="toggleChat()" style="background-color: #ff9900;">Ask AI Assistant</button>
             <a href="/export" class="btn" target="_blank">Export as PDF</a>
         </div>
     </header>
@@ -161,11 +164,77 @@
         <!-- Cards injected dynamically -->
     </div>
 
+    <!-- RAG Chat Modal -->
+    <div id="chatModal"
+        style="display:none; position:fixed; bottom:30px; right:40px; width:450px; background:var(--card-bg); border: 2px solid var(--accent); border-radius:12px; padding:25px; z-index:1000; box-shadow: 0px 5px 25px rgba(118, 185, 0, 0.4);">
+        <h3 style="margin-top:0; color:var(--accent); font-size: 20px;">AI Teaching Assistant</h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-top: -10px;">Powered by local Ollama & ChromaDB</p>
+        <div id="chatHistory"
+            style="height:300px; overflow-y:auto; background:#000; border:1px solid #333; padding:15px; border-radius:8px; margin-bottom:15px; font-size:15px; line-height: 1.5;">
+        </div>
+        <input type="text" id="chatInput" placeholder="Ask questions about formulas on the board..."
+            style="width: calc(100% - 35px); margin-bottom:15px;">
+        <button class="btn" style="width:100%; border-radius:5px; padding: 12px;" onclick="sendChat()">Submit
+            Query</button>
+    </div>
+
     <script>
         const gallery = document.getElementById('gallery');
         const searchInput = document.getElementById('searchInput');
-        let currentPages = {}; 
+        let currentPages = {};
         let searchTerm = "";
+
+        function toggleChat() {
+            const modal = document.getElementById('chatModal');
+            modal.style.display = modal.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chatInput');
+            const history = document.getElementById('chatHistory');
+            const query = input.value;
+            if (!query.trim()) return;
+
+            // Log UI
+            history.innerHTML += `<div style="margin-bottom:15px; color:#fff;"><b>You:</b> <span style="font-weight: 300;">${query}</span></div>`;
+            input.value = "";
+            history.innerHTML += `<div id="loadingChat" style="color:var(--text-muted);"><i>Thinking and vectorizing local state (RAG Sync)...</i></div>`;
+            history.scrollTop = history.scrollHeight;
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+                const data = await response.json();
+                document.getElementById('loadingChat').remove();
+
+                if (data.error) {
+                    history.innerHTML += `<div style="color:#ff4d4d; margin-bottom:15px;"><b>Error:</b> ${data.error}</div>`;
+                } else {
+                    // Convert newlines in answer to <br>
+                    const formattedAnswer = data.answer.replace(/\n/g, '<br>');
+                    history.innerHTML += `<div style="color:var(--accent); margin-bottom:8px;"><b>Assistant:</b> <br><span style="color:#fff; font-weight:300;">${formattedAnswer}</span></div>`;
+
+                    if (data.sources && data.sources.length > 0) {
+                        let srcHtml = "<div style='font-size:12px; color:#888; margin-bottom:15px; border-top: 1px dashed #333; padding-top: 8px;'><i>Sourced from Captures: ";
+                        data.sources.forEach(src => {
+                            srcHtml += `[${src.db_id}] `;
+                        });
+                        srcHtml += "</i></div>";
+                        history.innerHTML += srcHtml;
+                    } else {
+                        history.innerHTML += `<div style="margin-bottom:15px;"></div>`;
+                    }
+                }
+            } catch (err) {
+                const lc = document.getElementById('loadingChat');
+                if (lc) lc.remove();
+                history.innerHTML += `<div style="color:#ff4d4d; margin-bottom:15px;"><b>Connection Error:</b> The Intelligence API failed. Double check Ollama is running.</div>`;
+            }
+            history.scrollTop = history.scrollHeight;
+        }
 
         function toggleText(id) {
             const txtDiv = document.getElementById(`txt-${id}`);
@@ -176,9 +245,9 @@
             try {
                 const response = await fetch('/api/pages');
                 const data = await response.json();
-                
+
                 const newIds = new Set(data.map(p => p.id));
-                
+
                 // Cleanup removed
                 for (let knownId in currentPages) {
                     if (!newIds.has(knownId)) {
@@ -187,11 +256,11 @@
                         delete currentPages[knownId];
                     }
                 }
-                
+
                 data.forEach(page => {
                     const isProcessing = page.processing;
-                    const textSnippet = isProcessing ? `<span class="processing-tag">Processing...</span>` : 
-                                      `<button class="btn" onclick="toggleText('${page.id}')" style="padding: 5px 10px; font-size: 12px; background: transparent; border: 1px solid var(--accent); color: var(--accent);">View Text</button>`;
+                    const textSnippet = isProcessing ? `<span class="processing-tag">Processing...</span>` :
+                        `<button class="btn" onclick="toggleText('${page.id}')" style="padding: 5px 10px; font-size: 12px; background: transparent; border: 1px solid var(--accent); color: var(--accent);">View Text</button>`;
 
                     const cardHtml = `
                         <div class="card" id="card-${page.id}" data-text="${page.text.toLowerCase()}">
@@ -212,7 +281,7 @@
                         gallery.insertAdjacentHTML('afterbegin', cardHtml);
                         currentPages[page.id] = page;
                         applySearchFilter();
-                    } 
+                    }
                     // Update processing to done
                     else if (currentPages[page.id].processing && !page.processing) {
                         const existingCard = document.getElementById(`card-${page.id}`);
@@ -251,4 +320,5 @@
         setInterval(fetchPages, 3000); // 3s fetch
     </script>
 </body>
+
 </html>

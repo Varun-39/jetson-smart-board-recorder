@@ -2,9 +2,18 @@ import os
 import glob
 import io
 import urllib.request
+import sqlite3
 from datetime import datetime
 from flask import Flask, render_template, jsonify, send_from_directory, send_file, request
 from fpdf import FPDF
+import requests
+
+try:
+    from rag_engine import RAGEngine
+    rag = RAGEngine()
+except Exception as e:
+    rag = None
+    print(f"[RAG WARNING] Failed to boot RAGEngine, Chat functions disabled locally. Error: {e}")
 
 app = Flask(__name__)
 CAPTURE_DIR = "captures"
@@ -14,7 +23,7 @@ def ensure_font_loaded():
     if not os.path.exists(FONT_PATH):
         print("[System] Downloading DejaVuSans.ttf for PDF Unicode support...")
         try:
-            url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
+            url = "https://raw.githubusercontent.com/prawnpdf/prawn/master/data/fonts/DejaVuSans.ttf"
             urllib.request.urlretrieve(url, FONT_PATH)
         except Exception as e:
             print(f"[Warning] Failed to download Unicode font: {e}")
@@ -25,47 +34,117 @@ def index():
 
 @app.route('/api/pages')
 def get_pages():
-    if not os.path.exists(CAPTURE_DIR):
-        return jsonify([])
+    conn = sqlite3.connect('app.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
     
-    # Find all .jpg files
-    images = glob.glob(os.path.join(CAPTURE_DIR, "*.jpg"))
-    # Sort them sequentially based on the page number
-    images.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
-    
-    # Simple Pagination
+    # Simple Pagination using SQL
     limit = request.args.get('limit', type=int)
     offset = request.args.get('offset', default=0, type=int)
     
     if limit is not None:
-        images = images[offset:offset+limit]
+        c.execute("SELECT * FROM board_captures ORDER BY id ASC LIMIT ? OFFSET ?", (limit, offset))
     else:
-        images = images[offset:]
+        c.execute("SELECT * FROM board_captures ORDER BY id ASC OFFSET ?", (offset,))
+        
+    rows = c.fetchall()
+    conn.close()
     
     pages = []
-    for img_path in images:
-        base_name = os.path.splitext(os.path.basename(img_path))[0]
-        txt_path = os.path.join(CAPTURE_DIR, f"{base_name}.txt")
+    for row in rows:
+        # Standardize formatting to provide robust REST mapping
+        base_name = os.path.splitext(os.path.basename(row['image_path']))[0]
+        text_content = row['raw_text'] if row['raw_text'] else ""
         
-        text_content = ""
-        processing = False
-        
-        if os.path.exists(txt_path):
-            with open(txt_path, 'r', encoding='utf-8') as f:
-                text_content = f.read()
-        else:
-            # If the image exists but txt doesn't, OCR thread is still working
-            text_content = "Processing..."
-            processing = True
-            
         pages.append({
             'id': base_name,
             'image_url': f'/captures/{base_name}.jpg',
             'text': text_content,
-            'processing': processing
+            'confidence': row['confidence_score'],
+            'processing': False
         })
         
     return jsonify(pages)
+
+@app.route('/api/search')
+def api_search():
+    query = request.args.get('q', type=str)
+    if not query:
+        return jsonify([])
+        
+    conn = sqlite3.connect('app.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM board_captures WHERE raw_text LIKE ?", ('%' + query + '%',))
+    rows = c.fetchall()
+    conn.close()
+    
+    results = [dict(row) for row in rows]
+    return jsonify(results)
+
+@app.route('/api/chat', methods=['POST'])
+def api_chat():
+    if not rag:
+        return jsonify({"answer": "Intelligence API is disconnected offline.", "sources": []})
+
+    data = request.get_json()
+    if not data or 'query' not in data:
+        return jsonify({"error": "Missing query payload"}), 400
+        
+    query = data['query']
+    
+    # 1. Pre-sync specific vector state locally
+    conn = sqlite3.connect('app.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM board_captures")
+    rows = c.fetchall()
+    conn.close()
+    
+    rag.sync_db_to_vector_store([dict(r) for r in rows])
+    
+    # 2. Extract context dimensions
+    matches = rag.retrieve_context(query, top_k=3)
+    if not matches:
+        return jsonify({"answer": "I don't have any contextual insights on that topic.", "sources": []})
+        
+    # Format structural LLM Prompt exactly handling fuzzy OCR formatting
+    context_text = "\n---\n".join([f"Board Scan #{i+1}: {m['text']}" for i, m in enumerate(matches)])
+    sources = [m['metadata'] for m in matches]
+    
+    system_prompt = f"""You are an advanced Expert Architecture Teaching Assistant interpreting extracted OCR.
+The human text represents chaotic whiteboards, and may contain fragments, typographical errors or mathematical inaccuracies (e.g. "t(x) - x2" instead of "f(x) = x^2").
+CRITICAL RULE: Reconstruct logical flows based ONLY on logical interpretations of the text. Do NOT hallucinate mathematical theorems or concepts NOT strictly found in the provided OCR blocks.
+Answer honestly relying strictly on the following board snapshots:
+
+<CONTEXT>
+{context_text}
+</CONTEXT>"""
+
+    payload = {
+        "model": "llama3.1:8b",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.1
+        }
+    }
+    
+    # 3. Call local lightweight JSON post processing
+    try:
+        response = requests.post('http://localhost:11434/api/chat', json=payload, timeout=25)
+        response.raise_for_status()
+        answer = response.json()['message']['content']
+    except Exception as e:
+        answer = f"[LLM REST ERROR] Ensure Ollama is running structurally on port 11434! {str(e)}"
+        
+    return jsonify({
+        "answer": answer,
+        "sources": sources
+    })
 
 @app.route('/captures/<filename>')
 def serve_capture(filename):
@@ -73,14 +152,15 @@ def serve_capture(filename):
 
 @app.route('/export')
 def export_pdf():
-    if not os.path.exists(CAPTURE_DIR):
-        return "No captures found", 404
-        
-    images = glob.glob(os.path.join(CAPTURE_DIR, "*.jpg"))
-    images.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+    conn = sqlite3.connect('app.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM board_captures ORDER BY id ASC")
+    rows = c.fetchall()
+    conn.close()
     
-    if not images:
-        return "No captures found", 404
+    if not rows:
+        return "No captures found currently generated by the OCR engine.", 404
 
     ensure_font_loaded()
 
@@ -95,7 +175,7 @@ def export_pdf():
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     
-    for img_path in images:
+    for row in rows:
         pdf.add_page()
         # Header
         try:
@@ -103,6 +183,7 @@ def export_pdf():
         except Exception:
              pdf.set_font("helvetica", "B", 16)
         pdf.cell(0, 10, "Smart Board Capture", align="C", new_x="LMARGIN", new_y="NEXT")
+        
         try:
              pdf.set_font(base_font, "", 10)
         except Exception:
@@ -111,33 +192,26 @@ def export_pdf():
         pdf.ln(5)
         
         # Max width 180mm to fit standard A4 margin
-        pdf.image(img_path, w=180)
+        pdf.image(row['image_path'], w=180)
         pdf.ln(10)
-        
-        base_name = os.path.splitext(os.path.basename(img_path))[0]
-        txt_path = os.path.join(CAPTURE_DIR, f"{base_name}.txt")
         
         try:
              pdf.set_font(base_font, "", 12)
         except Exception:
              pdf.set_font("helvetica", "", 12)
              
-        if os.path.exists(txt_path):
-            with open(txt_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                # Encode text replacing unprintable chars if falling back
-                if base_font == "helvetica":
-                    content = content.encode('latin-1', 'replace').decode('latin-1') 
-                pdf.multi_cell(0, 8, content)
-        else:
-            pdf.multi_cell(0, 8, "[OCR Processing Incomplete]")
+        content = row['raw_text'] if row['raw_text'] else "[OCR Read Incomplete]"
+            
+        if base_font == "helvetica":
+            content = content.encode('latin-1', 'replace').decode('latin-1') 
+            
+        pdf.multi_cell(0, 8, content)
             
     # Volatile RAM export
     pdf_bytes = pdf.output()
     return send_file(io.BytesIO(pdf_bytes), as_attachment=True, download_name="Lecture_Notes.pdf", mimetype='application/pdf')
 
 def run_flask():
-    # Keep console silent using werkzeug logger
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)

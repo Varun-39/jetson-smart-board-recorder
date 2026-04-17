@@ -24,6 +24,10 @@ Thumbs.db
 Lecture_Notes.pdf
 *test*.jpg
 *test*.png
+*.mp4
+*.avi
+app.db
+chroma_db/
 
 # Agent and Workflow Data
 .gsd/

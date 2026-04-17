@@ -1,6 +1,10 @@
 Flask==3.0.3
 fpdf2==2.8.7
 opencv-python==4.9.0.80
-pytesseract==0.3.13
 scikit-image==0.22.0
 numpy
+easyocr
+pycuda
+chromadb
+sentence-transformers
+requests

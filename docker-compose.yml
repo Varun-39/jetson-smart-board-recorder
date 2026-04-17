@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  smartboard:
+    build: .
+    runtime: nvidia
+    container_name: smartboard_recorder
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      # Map capture directory back to host filesystem
+      - ./captures:/app/captures
+      # Persist SQLite Database to host
+      - ./app.db:/app/app.db
+      # Map Argus socket to allow nvarguscamerasrc CSI camera access
+      - /tmp/argus_socket:/tmp/argus_socket
+    devices:
+      # Grant container access to V4L2 webcams/device nodes
+      - /dev/video0:/dev/video0

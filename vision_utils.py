@@ -1,6 +1,50 @@
 import cv2
 import numpy as np
 import config
+import threading
+import queue
+import time
+
+class CameraThread(threading.Thread):
+    def __init__(self, pipeline_or_index):
+        super().__init__()
+        self.daemon = True
+        self.q = queue.Queue(maxsize=1)
+        # Try GStreamer first if string, otherwise standard
+        self.cap = cv2.VideoCapture(pipeline_or_index, cv2.CAP_GSTREAMER if type(pipeline_or_index) == str else cv2.CAP_ANY)
+        
+        if type(pipeline_or_index) == str and not self.cap.isOpened():
+            print("Error: Could not open CSI camera. Falling back to webcam 0...")
+            self.cap = cv2.VideoCapture(0)
+            
+        if not self.cap.isOpened():
+            print("Error: Could not open any camera.")
+            
+        self.running = True
+        self.start()
+
+    def run(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.01)
+                continue
+            
+            # If queue is full, drop the old frame to maintain zero-lag
+            if self.q.full():
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    pass
+            self.q.put(frame)
+
+    def read(self):
+        frame = self.q.get()
+        return True, frame
+
+    def release(self):
+        self.running = False
+        self.cap.release()
 
 class BoardProcessor:
     def __init__(self):
@@ -26,11 +70,11 @@ class BoardProcessor:
                 peri = cv2.arcLength(hull, True)
                 approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
                 if len(approx) == 4:
-                    return self._warp_perspective(frame, approx)
+                    return self._warp_perspective(frame, approx), approx
         
         # Safety Fallback: Return original frame if no valid board detected
         print("[WARNING] Could not detect a valid 4-point board contour. Falling back to raw frame.")
-        return frame
+        return frame, None
 
     def _warp_perspective(self, frame, approx):
         pts = approx.reshape(4, 2)
