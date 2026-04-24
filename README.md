@@ -1,4 +1,4 @@
-# 🧠 Jetson Smart Board Recorder: Edge-AI Contextual Capture & Local RAG System
+#  Jetson Smart Board Recorder: Edge-AI Contextual Capture & Local RAG System
 
 ## 1. Problem Statement
 In modern educational and collaborative environments, manually capturing whiteboard notes interrupts the flow of teaching and often loses crucial context. While automated solutions exist, they heavily rely on cloud-based Computer Vision and Large Language Model (LLM) APIs. This introduces significant latency, incurs recurring API costs, and most importantly, compromises data privacy by sending sensitive classroom or proprietary corporate data to third-party servers. There is a critical need for an entirely offline, high-performance archival system that can read, understand, and structure board contents natively.
