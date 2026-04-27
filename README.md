@@ -39,6 +39,15 @@ The system outputs a fully searchable, localized web dashboard featuring structu
   * *Previous Version (CPU Tesseract):* ~4-6 seconds per 720p frame, maxing out CPU to 100%.
   * *Current Version (GPU EasyOCR):* ~1.2 seconds per frame, freeing CPU for Flask web serving and seamless Database insertions.
 
+### Tesseract vs EasyOCR — Why EasyOCR?
+
+| Aspect | Tesseract | EasyOCR | Why EasyOCR Was Chosen |
+|:---|:---|:---|:---|
+| **Recognition Accuracy** | Strong on clean, structured text; accuracy drops on noisy or complex board images | Better on noisy, distorted, handwritten, or mixed-text scenes | The project targets real whiteboard captures — robustness on imperfect input matters more than clean-document OCR |
+| **Output Quality for RAG** | More likely to produce garbled text on messy input, reducing reliability for downstream retrieval | Produces more usable text in uncontrolled scenes, improving semantic search and chat answers | Higher quality OCR output means fewer incorrect facts entering the Llama 3.1 RAG pipeline |
+| **GPU Acceleration** | Primarily CPU-bound; competes with the rest of the pipeline for limited ARM CPU time | Native `gpu=True` support; runs inference directly on CUDA cores | The system already leverages GPU acceleration (TensorRT, PyTorch) — OCR must fit the same execution model |
+| **Reliability for This App** | Ideal for neat scanned documents; less suited for live board captures | Purpose-built for captured, imperfect, real-world classroom content | The app prioritizes practical extraction quality over document-grade OCR purity |
+
 ## 8. Setup Instructions
 
 ### Prerequisites
