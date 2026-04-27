@@ -96,6 +96,9 @@ The system outputs a fully searchable, localized web dashboard featuring structu
    ```
 
 ## 9. Mission Control Dashboard
+
+![Mission Control Dashboard](assets/UI.png)
+
 Navigate any browser to `http://localhost:5000` (or your Jetson's specific local IP).
 * Perform lightning-fast fuzzy searches targeting historical lectures.
 * Convert sessions down to universal Unicode PDFs instantly.
